@@ -916,46 +916,76 @@ def networkMon (threadname, delay):
             elif netMonChkCnt == 1:
                 # Radio monitoring server not start yet, or previously has already terminated
                 if radioValid == False:
-                    # Option for soapy sdr server
-                    if radioOpt == 0:
-                        tempArg = "SoapySDRServer --bind=" + "'" + publicIPaddr + ":1234' " + "> /dev/null 2>&1 &"
-                        out = subprocess.Popen([tempArg], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                        
-                    # Option for RSPTCP server
-                    elif radioOpt == 1:
-                        tempArg = "rsp_tcp -E -a " + publicIPaddr + " > /dev/null 2>&1 &"
-                        out = subprocess.Popen([tempArg], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-
-                    # Option for custom gnuradio radio data server
-                    elif radioOpt == 2:
-                        out = subprocess.Popen(["/sources/common/sourcecode/radio-server; /usr/bin/python radio_server.py > /dev/null 2>&1 &"], \
-                                               shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    # Checking SDR availability
+                    out = subprocess.Popen(["lsusb"], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                     stdout,stderr = out.communicate()
 
                     # NO error after command execution
                     if stderr == None:
-                        radioValid = True
-                        netMonChkCnt = 0
+                        # SDR USB bus ID
+                        if '1df7:3000' in stdout:
+                            # Write to logger
+                            if backLogger == True:
+                                logger.info("DEBUG_NETMON: SDR module available")
+                            # Print statement
+                            else:
+                                print "DEBUG_NETMON: SDR module available"
+                                    
+                            # Wait before execute another command
+                            time.sleep(1)
 
-                        # Change LCD operation mode
-                        lcdOperSel = 14
-                        
-                        # Write to logger
-                        if backLogger == True:
-                            logger.info("DEBUG_NETMON: Initiate radio monitoring server successful")
-                        # Print statement
-                        else:
-                            print "DEBUG_NETMON: Initiate radio monitoring server successful"
-                        
-                    # Operation failed
-                    else:
-                        # Write to logger
-                        if backLogger == True:
-                            logger.info("DEBUG_NETMON: Command execution to initiate radio monitoring server FAILED!")
-                        # Print statement
-                        else:
-                            print "DEBUG_NETMON: Command execution to initiate radio monitoring server FAILED!"
+                            # Option for soapy sdr server
+                            if radioOpt == 0:
+                                tempArg = "SoapySDRServer --bind=" + "'" + publicIPaddr + ":1234' " + "> /dev/null 2>&1 &"
+                                out = subprocess.Popen([tempArg], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                
+                            # Option for RSPTCP server
+                            elif radioOpt == 1:
+                                tempArg = "rsp_tcp -E -a " + publicIPaddr + " > /dev/null 2>&1 &"
+                                out = subprocess.Popen([tempArg], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
+                            # Option for custom gnuradio radio data server
+                            elif radioOpt == 2:
+                                out = subprocess.Popen(["/sources/common/sourcecode/radio-server; /usr/bin/python radio_server.py > /dev/null 2>&1 &"], \
+                                                       shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                            stdout,stderr = out.communicate()
+
+                            # NO error after command execution
+                            if stderr == None:
+                                radioValid = True
+                                netMonChkCnt = 0
+
+                                # Change LCD operation mode
+                                lcdOperSel = 14
+                                
+                                # Write to logger
+                                if backLogger == True:
+                                    logger.info("DEBUG_NETMON: Initiate radio monitoring server successful")
+                                # Print statement
+                                else:
+                                    print "DEBUG_NETMON: Initiate radio monitoring server successful"
+                                
+                            # Operation failed
+                            else:
+                                # Write to logger
+                                if backLogger == True:
+                                    logger.info("DEBUG_NETMON: Command execution to initiate radio monitoring server FAILED!")
+                                # Print statement
+                                else:
+                                    print "DEBUG_NETMON: Command execution to initiate radio monitoring server FAILED!"
+                                    
+                        # SDR NOT available
+                        else:
+                            # Write to logger
+                            if backLogger == True:
+                                logger.info("DEBUG_NETMON: SDR module NOT available")
+                            # Print statement
+                            else:
+                                print "DEBUG_NETMON: SDR module NOT available"
+
+                            # Change LCD operation mode
+                            lcdOperSel = 15
+                    
                 # Radio monitoring server status check by checking the server process ID
                 else:
                     # Option for soapy sdr server
@@ -1487,375 +1517,412 @@ def lcdOperation (threadname, delay):
         # Loop every 0.5s
         time.sleep(delay)
 
-        # Default LCD display information
-        if lcdOperSel == 0:
-            # Turn ON LCD back light for 10s
-            if GPIO.input(17) == False or GPIO.input(24) == False:
+        # Try execution
+        try:
+            # Default LCD display information
+            if lcdOperSel == 0:
+                # Turn ON LCD back light for 10s
+                if GPIO.input(17) == False or GPIO.input(24) == False:
+                    # Turn ON LCD back light
+                    GPIO.output(27, GPIO.HIGH)
+                    lcdBlTimeOut = 0
+                elif lcdBlTimeOut == 20:
+                    # Turn OFF LCD back light
+                    GPIO.output(27, GPIO.LOW)
+                    lcdBlTimeOut = 0
+                else:
+                    # Increment LCD back light counter
+                    lcdBlTimeOut += 1
+
+                lcdDlyStatCnt += 1
+                # Display security gw current status
+                if lcdDlyStatCnt < 10:
+                    if lcdDlyStatCnt == 0:
+                        mylcd.lcd_clear()
+
+                    # Security gateway mode
+                    if radioMode == False:
+                        if tunnelValid == False and net4gValid == False:
+                            # Previously i2c LCD initialization are successful
+                            if i2cLcd == True:
+                                mylcd.lcd_display_string('NC2VPN Secure GW', 1)
+                                mylcd.lcd_display_string('    OFFLINE     ', 2)
+
+                            # Previously i2c LCD initialization are failed
+                            else:
+                                # Write to logger
+                                if backLogger == True:
+                                    logger.info("DEBUG_LCD: NC2VPN Secure GW")
+                                    logger.info("DEBUG_LCD: OFFLINE")
+                                # Print statement
+                                else:
+                                    print "DEBUG_LCD: NC2VPN Secure GW"
+                                    print "DEBUG_LCD: OFFLINE"
+                                
+                        elif tunnelValid == True and net4gValid == True:
+                            # Previously i2c LCD initialization are successful
+                            if i2cLcd == True:
+                                mylcd.lcd_display_string('NC2VPN Secure GW', 1)
+                                mylcd.lcd_display_string('     ONLINE     ', 2)
+
+                            # Previously i2c LCD initialization are failed    
+                            else:
+                                # Write to logger
+                                if backLogger == True:
+                                    logger.info("DEBUG_LCD: NC2VPN Secure GW")
+                                    logger.info("DEBUG_LCD: ONLINE")
+                                # Print statement
+                                else:
+                                    print "DEBUG_LCD: NC2VPN Secure GW"
+                                    print "DEBUG_LCD: ONLINE"
+                    # Radio mode
+                    else:
+                        if radioValid == False and net4gValid == False:
+                            # Previously i2c LCD initialization are successful
+                            if i2cLcd == True:
+                                mylcd.lcd_display_string(' Radio Mon. Svr ', 1)
+                                mylcd.lcd_display_string('    OFFLINE     ', 2)
+
+                            # Previously i2c LCD initialization are failed
+                            else:
+                                # Write to logger
+                                if backLogger == True:
+                                    logger.info("DEBUG_LCD: Radio Mon. Svr")
+                                    logger.info("DEBUG_LCD: OFFLINE")
+                                # Print statement
+                                else:
+                                    print "DEBUG_LCD: NC2VPN Secure GW"
+                                    print "DEBUG_LCD: OFFLINE"
+                                    
+                        elif radioValid == True and net4gValid == True:
+                            # Previously i2c LCD initialization are successful
+                            if i2cLcd == True:
+                                mylcd.lcd_display_string(' Radio Mon. Svr ', 1)
+                                mylcd.lcd_display_string('     ONLINE     ', 2)
+
+                            # Previously i2c LCD initialization are failed
+                            else:
+                                # Write to logger
+                                if backLogger == True:
+                                    logger.info("DEBUG_LCD: Radio Mon. Svr")
+                                    logger.info("DEBUG_LCD: ONLINE")
+                                # Print statement
+                                else:
+                                    print "DEBUG_LCD: NC2VPN Secure GW"
+                                    print "DEBUG_LCD: ONLINE"
+                    
+                # Display date and time for 5s
+                elif lcdDlyStatCnt >= 10 and lcdDlyStatCnt < 20:
+                    if lcdDlyStatCnt == 10:
+                        mylcd.lcd_clear()
+
+                    # Previously i2c LCD initialization are successful
+                    if i2cLcd == True:
+                        mylcd.lcd_display_string("Time: %s" %time.strftime("%H:%M:%S"), 1)
+                        mylcd.lcd_display_string("Date: %s" %time.strftime("%m/%d/%Y"), 2)
+
+                    # Previously i2c LCD initialization are failed
+                    else:
+                        # Write to logger
+                        if backLogger == True:
+                            logger.info("DEBUG_LCD: Time: %s" %time.strftime("%H:%M:%S"))
+                            logger.info("DEBUG_LCD: Date: %s" %time.strftime("%m/%d/%Y"))
+                        # Print statement
+                        else:
+                            print "DEBUG_LCD: Time: %s" %time.strftime("%H:%M:%S")
+                            print "DEBUG_LCD: Date: %s" %time.strftime("%m/%d/%Y")
+                                    
+                # Display battery status for 5s
+                elif lcdDlyStatCnt >= 20 and lcdDlyStatCnt < 30:
+                    if lcdDlyStatCnt == 20:
+                        mylcd.lcd_clear()
+
+                    if lcdBattCap > 100:
+                        lcdBattCap = 100
+
+                    # Previously i2c LCD initialization are successful
+                    if i2cLcd == True:
+                        mylcd.lcd_display_string("Volt: %5.2fV" % lcdBattVolt, 1)
+                        mylcd.lcd_display_string("Cap: %5i%%" % lcdBattCap, 2)
+
+                    # Previously i2c LCD initialization are failed
+                    else:
+                        # Write to logger
+                        if backLogger == True:
+                            logger.info("DEBUG_LCD: Volt: %5.2fV" % lcdBattVolt)
+                            logger.info("DEBUG_LCD: Cap: %5i%%" % lcdBattCap)
+                        # Print statement
+                        else:
+                            print "DEBUG_LCD: Volt: %5.2fV" % lcdBattVolt
+                            print "DEBUG_LCD: Cap: %5i%%" % lcdBattCap
+                            
+                # Reset counter
+                elif lcdDlyStatCnt == 30:
+                    lcdDlyStatCnt = 0
+
+            elif lcdOperSel == 1:
                 # Turn ON LCD back light
                 GPIO.output(27, GPIO.HIGH)
-                lcdBlTimeOut = 0
-            elif lcdBlTimeOut == 20:
-                # Turn OFF LCD back light
-                GPIO.output(27, GPIO.LOW)
-                lcdBlTimeOut = 0
-            else:
-                # Increment LCD back light counter
-                lcdBlTimeOut += 1
 
-            lcdDlyStatCnt += 1
-            # Display security gw current status
-            if lcdDlyStatCnt < 10:
-                if lcdDlyStatCnt == 0:
+                # Previously i2c LCD initialization are successful
+                if i2cLcd == True:
                     mylcd.lcd_clear()
+                    mylcd.lcd_display_string('ENCRYPT Process ', 1)
+                    mylcd.lcd_display_string('Please wait.....', 2)
 
-                # Security gateway mode
-                if radioMode == False:
-                    if tunnelValid == False and net4gValid == False:
-                        # Previously i2c LCD initialization are successful
-                        if i2cLcd == True:
-                            mylcd.lcd_display_string('NC2VPN Secure GW', 1)
-                            mylcd.lcd_display_string('    OFFLINE     ', 2)
-
-                        # Previously i2c LCD initialization are failed
-                        else:
-                            # Write to logger
-                            if backLogger == True:
-                                logger.info("DEBUG_LCD: NC2VPN Secure GW")
-                                logger.info("DEBUG_LCD: OFFLINE")
-                            # Print statement
-                            else:
-                                print "DEBUG_LCD: NC2VPN Secure GW"
-                                print "DEBUG_LCD: OFFLINE"
+                # Previously i2c LCD initialization are failed
+                else:
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_LCD: ENCRYPT Process")
+                        logger.info("DEBUG_LCD: Please wait.....")
+                    # Print statement
+                    else:
+                        print "DEBUG_LCD: ENCRYPT Process"
+                        print "DEBUG_LCD: Please wait....."
                             
-                    elif tunnelValid == True and net4gValid == True:
-                        # Previously i2c LCD initialization are successful
-                        if i2cLcd == True:
-                            mylcd.lcd_display_string('NC2VPN Secure GW', 1)
-                            mylcd.lcd_display_string('     ONLINE     ', 2)
+                lcdOperSel = 2
 
-                        # Previously i2c LCD initialization are failed    
-                        else:
-                            # Write to logger
-                            if backLogger == True:
-                                logger.info("DEBUG_LCD: NC2VPN Secure GW")
-                                logger.info("DEBUG_LCD: ONLINE")
-                            # Print statement
-                            else:
-                                print "DEBUG_LCD: NC2VPN Secure GW"
-                                print "DEBUG_LCD: ONLINE"
-                # Radio mode
+            elif lcdOperSel == 3:
+                # Previously i2c LCD initialization are successful
+                if i2cLcd == True:
+                    mylcd.lcd_clear()
+                    mylcd.lcd_display_string('ENCRYPT Process ', 1)
+                    mylcd.lcd_display_string('Successful      ', 2)
+
+                # Previously i2c LCD initialization are failed
                 else:
-                    if radioValid == False and net4gValid == False:
-                        # Previously i2c LCD initialization are successful
-                        if i2cLcd == True:
-                            mylcd.lcd_display_string(' Radio Mon. Svr ', 1)
-                            mylcd.lcd_display_string('    OFFLINE     ', 2)
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_LCD: ENCRYPT Process")
+                        logger.info("DEBUG_LCD: Successful")
+                    # Print statement
+                    else:
+                        print "DEBUG_LCD: ENCRYPT Process"
+                        print "DEBUG_LCD: Successful"
+                        
+                # Delay a bit, to display another info
+                time.sleep(3)
 
-                        # Previously i2c LCD initialization are failed
-                        else:
-                            # Write to logger
-                            if backLogger == True:
-                                logger.info("DEBUG_LCD: Radio Mon. Svr")
-                                logger.info("DEBUG_LCD: OFFLINE")
-                            # Print statement
-                            else:
-                                print "DEBUG_LCD: NC2VPN Secure GW"
-                                print "DEBUG_LCD: OFFLINE"
-                                
-                    elif radioValid == True and net4gValid == True:
-                        # Previously i2c LCD initialization are successful
-                        if i2cLcd == True:
-                            mylcd.lcd_display_string(' Radio Mon. Svr ', 1)
-                            mylcd.lcd_display_string('     ONLINE     ', 2)
+                # Previously i2c LCD initialization are successful
+                if i2cLcd == True:
+                    mylcd.lcd_clear()
+                    mylcd.lcd_display_string('Please remove   ', 1)
+                    mylcd.lcd_display_string('USB stick.......', 2)
 
-                        # Previously i2c LCD initialization are failed
-                        else:
-                            # Write to logger
-                            if backLogger == True:
-                                logger.info("DEBUG_LCD: Radio Mon. Svr")
-                                logger.info("DEBUG_LCD: ONLINE")
-                            # Print statement
-                            else:
-                                print "DEBUG_LCD: NC2VPN Secure GW"
-                                print "DEBUG_LCD: ONLINE"
+                # Previously i2c LCD initialization are failed
+                else:
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_LCD: Please remove")
+                        logger.info("DEBUG_LCD: USB stick.......")
+                    # Print statement
+                    else:
+                        print "DEBUG_LCD: Please remove"
+                        print "DEBUG_LCD: USB stick......."
                 
-            # Display date and time for 5s
-            elif lcdDlyStatCnt >= 10 and lcdDlyStatCnt < 20:
-                if lcdDlyStatCnt == 10:
-                    mylcd.lcd_clear()
+                lcdOperSel = 4
+
+            elif lcdOperSel == 5:
+                # Turn ON LCD back light
+                GPIO.output(27, GPIO.HIGH)
 
                 # Previously i2c LCD initialization are successful
                 if i2cLcd == True:
-                    mylcd.lcd_display_string("Time: %s" %time.strftime("%H:%M:%S"), 1)
-                    mylcd.lcd_display_string("Date: %s" %time.strftime("%m/%d/%Y"), 2)
+                    mylcd.lcd_clear()
+                    mylcd.lcd_display_string('DECRYPT Process ', 1)
+                    mylcd.lcd_display_string('Please wait.....', 2)
 
                 # Previously i2c LCD initialization are failed
                 else:
                     # Write to logger
                     if backLogger == True:
-                        logger.info("DEBUG_LCD: Time: %s" %time.strftime("%H:%M:%S"))
-                        logger.info("DEBUG_LCD: Date: %s" %time.strftime("%m/%d/%Y"))
+                        logger.info("DEBUG_LCD: DECRYPT Process")
+                        logger.info("DEBUG_LCD: Please wait.....")
                     # Print statement
                     else:
-                        print "DEBUG_LCD: Time: %s" %time.strftime("%H:%M:%S")
-                        print "DEBUG_LCD: Date: %s" %time.strftime("%m/%d/%Y")
-                                
-            # Display battery status for 5s
-            elif lcdDlyStatCnt >= 20 and lcdDlyStatCnt < 30:
-                if lcdDlyStatCnt == 20:
-                    mylcd.lcd_clear()
+                        print "DEBUG_LCD: DECRYPT Process"
+                        print "DEBUG_LCD: Please wait....."
 
-                if lcdBattCap > 100:
-                    lcdBattCap = 100
+                lcdOperSel = 6
 
+            elif lcdOperSel == 7:
                 # Previously i2c LCD initialization are successful
                 if i2cLcd == True:
-                    mylcd.lcd_display_string("Volt: %5.2fV" % lcdBattVolt, 1)
-                    mylcd.lcd_display_string("Cap: %5i%%" % lcdBattCap, 2)
+                    mylcd.lcd_clear()
+                    mylcd.lcd_display_string('DECRYPT Process ', 1)
+                    mylcd.lcd_display_string('Successful      ', 2)
 
                 # Previously i2c LCD initialization are failed
                 else:
                     # Write to logger
                     if backLogger == True:
-                        logger.info("DEBUG_LCD: Volt: %5.2fV" % lcdBattVolt)
-                        logger.info("DEBUG_LCD: Cap: %5i%%" % lcdBattCap)
+                        logger.info("DEBUG_LCD: DECRYPT Process")
+                        logger.info("DEBUG_LCD: Successful")
                     # Print statement
                     else:
-                        print "DEBUG_LCD: Volt: %5.2fV" % lcdBattVolt
-                        print "DEBUG_LCD: Cap: %5i%%" % lcdBattCap
+                        print "DEBUG_LCD: DECRYPT Process"
+                        print "DEBUG_LCD: Successful"
+
+                lcdOperSel = 8
+
+            elif lcdOperSel == 9:
+                # Previously i2c LCD initialization are successful
+                if i2cLcd == True:
+                    mylcd.lcd_clear()
+                    mylcd.lcd_display_string('Init. 4G modem  ', 1)
+                    mylcd.lcd_display_string('Successful      ', 2)
+
+                # Previously i2c LCD initialization are failed
+                else:
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_LCD: Init. 4G modem")
+                        logger.info("DEBUG_LCD: Successful")
+                    # Print statement
+                    else:
+                        print "DEBUG_LCD: Init. 4G modem"
+                        print "DEBUG_LCD: Successful"
                         
-            # Reset counter
-            elif lcdDlyStatCnt == 30:
+                lcdOperSel = 10
+
+            elif lcdOperSel == 11:
+                # Previously i2c LCD initialization are successful
+                if i2cLcd == True:
+                    mylcd.lcd_clear()
+                    mylcd.lcd_display_string('Init. NC2VPN    ', 1)
+                    mylcd.lcd_display_string('Successful      ', 2)
+
+                # Previously i2c LCD initialization are failed
+                else:
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_LCD: Init. NC2VPN")
+                        logger.info("DEBUG_LCD: Successful")
+                    # Print statement
+                    else:
+                        print "DEBUG_LCD: Init. NC2VPN"
+                        print "DEBUG_LCD: Successful"
+                        
+                # Delay a bit, to display another info
+                time.sleep(3)
+
+                lcdOperSel = 0
                 lcdDlyStatCnt = 0
+                lcdBlTimeOut = 0
 
-        elif lcdOperSel == 1:
-            # Turn ON LCD back light
-            GPIO.output(27, GPIO.HIGH)
+            elif lcdOperSel == 12:
+                # Previously i2c LCD initialization are successful
+                if i2cLcd == True:
+                    mylcd.lcd_clear()
+                    # Write to LCD info
+                    mylcd.lcd_display_string('DECRYPT Process ', 1)
+                    mylcd.lcd_display_string('Failed!         ', 2)
 
-            # Previously i2c LCD initialization are successful
-            if i2cLcd == True:
-                mylcd.lcd_clear()
-                mylcd.lcd_display_string('ENCRYPT Process ', 1)
-                mylcd.lcd_display_string('Please wait.....', 2)
-
-            # Previously i2c LCD initialization are failed
-            else:
-                # Write to logger
-                if backLogger == True:
-                    logger.info("DEBUG_LCD: ENCRYPT Process")
-                    logger.info("DEBUG_LCD: Please wait.....")
-                # Print statement
+                # Previously i2c LCD initialization are failed
                 else:
-                    print "DEBUG_LCD: ENCRYPT Process"
-                    print "DEBUG_LCD: Please wait....."
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_LCD: DECRYPT Process")
+                        logger.info("DEBUG_LCD: Failed!")
+                    # Print statement
+                    else:
+                        print "DEBUG_LCD: DECRYPT Process"
+                        print "DEBUG_LCD: Failed!"
+
+                # Delay a bit, to display another info
+                time.sleep(3)
+
+                lcdOperSel = 0
+                lcdDlyStatCnt = 0
+                lcdBlTimeOut = 0
+                
+            elif lcdOperSel == 13:
+                # Previously i2c LCD initialization are successful
+                if i2cLcd == True:
+                    mylcd.lcd_clear()
+                    # Write to LCD info
+                    mylcd.lcd_display_string('ENCRYPT Process ', 1)
+                    mylcd.lcd_display_string('Failed!         ', 2)
+
+                # Previously i2c LCD initialization are failed
+                else:
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_LCD: ENCRYPT Process")
+                        logger.info("DEBUG_LCD: Failed!")
+                    # Print statement
+                    else:
+                        print "DEBUG_LCD: ENCRYPT Process"
+                        print "DEBUG_LCD: Failed!"
+
+                # Delay a bit, to display another info
+                time.sleep(3)
+
+                lcdOperSel = 0
+                lcdDlyStatCnt = 0
+                lcdBlTimeOut = 0
+
+            elif lcdOperSel == 14:
+                # Previously i2c LCD initialization are successful
+                if i2cLcd == True:
+                    mylcd.lcd_clear()
+                    # Write to LCD info
+                    mylcd.lcd_display_string('Init. Radio Svr ', 1)
+                    mylcd.lcd_display_string('Successful      ', 2)
+
+                # Previously i2c LCD initialization are failed
+                else:
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_LCD: Init. Radio Svr")
+                        logger.info("DEBUG_LCD: Successful")
+                    # Print statement
+                    else:
+                        print "DEBUG_LCD: Init. Radio Svr"
+                        print "DEBUG_LCD: Successful"
                         
-            lcdOperSel = 2
+                # Delay a bit, to display another info
+                time.sleep(3)
 
-        elif lcdOperSel == 3:
-            # Previously i2c LCD initialization are successful
-            if i2cLcd == True:
-                mylcd.lcd_clear()
-                mylcd.lcd_display_string('ENCRYPT Process ', 1)
-                mylcd.lcd_display_string('Successful      ', 2)
+                lcdOperSel = 0
+                lcdDlyStatCnt = 0
+                lcdBlTimeOut = 0
 
-            # Previously i2c LCD initialization are failed
-            else:
-                # Write to logger
-                if backLogger == True:
-                    logger.info("DEBUG_LCD: ENCRYPT Process")
-                    logger.info("DEBUG_LCD: Successful")
-                # Print statement
+            elif lcdOperSel == 15:
+                # Previously i2c LCD initialization are successful
+                if i2cLcd == True:
+                    mylcd.lcd_clear()
+                    # Write to LCD info
+                    mylcd.lcd_display_string('SDR NOT Exist!  ', 1)
+                    mylcd.lcd_display_string('Please reconnect', 2)
+
+                # Previously i2c LCD initialization are failed
                 else:
-                    print "DEBUG_LCD: ENCRYPT Process"
-                    print "DEBUG_LCD: Successful"
-                    
-            # Delay a bit, to display another info
-            time.sleep(3)
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_LCD: SDR NOT Exist!")
+                        logger.info("DEBUG_LCD: Please reconnect")
+                    # Print statement
+                    else:
+                        print "DEBUG_LCD: SDR NOT Exist!"
+                        print "DEBUG_LCD: Please reconnect"
+                        
+                # Delay a bit, to display another info
+                time.sleep(3)
 
-            # Previously i2c LCD initialization are successful
-            if i2cLcd == True:
-                mylcd.lcd_clear()
-                mylcd.lcd_display_string('Please remove   ', 1)
-                mylcd.lcd_display_string('USB stick.......', 2)
-
-            # Previously i2c LCD initialization are failed
+                lcdOperSel = 0
+                lcdDlyStatCnt = 0
+                lcdBlTimeOut = 0
+                
+        # Error in execution
+        except:
+            # Write to logger
+            if backLogger == True:
+                logger.info("DEBUG_LCD: LCD FAILED!")
+            # Print statement
             else:
-                # Write to logger
-                if backLogger == True:
-                    logger.info("DEBUG_LCD: Please remove")
-                    logger.info("DEBUG_LCD: USB stick.......")
-                # Print statement
-                else:
-                    print "DEBUG_LCD: Please remove"
-                    print "DEBUG_LCD: USB stick......."
-            
-            lcdOperSel = 4
-
-        elif lcdOperSel == 5:
-            # Turn ON LCD back light
-            GPIO.output(27, GPIO.HIGH)
-
-            # Previously i2c LCD initialization are successful
-            if i2cLcd == True:
-                mylcd.lcd_clear()
-                mylcd.lcd_display_string('DECRYPT Process ', 1)
-                mylcd.lcd_display_string('Please wait.....', 2)
-
-            # Previously i2c LCD initialization are failed
-            else:
-                # Write to logger
-                if backLogger == True:
-                    logger.info("DEBUG_LCD: DECRYPT Process")
-                    logger.info("DEBUG_LCD: Please wait.....")
-                # Print statement
-                else:
-                    print "DEBUG_LCD: DECRYPT Process"
-                    print "DEBUG_LCD: Please wait....."
-
-            lcdOperSel = 6
-
-        elif lcdOperSel == 7:
-            # Previously i2c LCD initialization are successful
-            if i2cLcd == True:
-                mylcd.lcd_clear()
-                mylcd.lcd_display_string('DECRYPT Process ', 1)
-                mylcd.lcd_display_string('Successful      ', 2)
-
-            # Previously i2c LCD initialization are failed
-            else:
-                # Write to logger
-                if backLogger == True:
-                    logger.info("DEBUG_LCD: DECRYPT Process")
-                    logger.info("DEBUG_LCD: Successful")
-                # Print statement
-                else:
-                    print "DEBUG_LCD: DECRYPT Process"
-                    print "DEBUG_LCD: Successful"
-
-            lcdOperSel = 8
-
-        elif lcdOperSel == 9:
-            # Previously i2c LCD initialization are successful
-            if i2cLcd == True:
-                mylcd.lcd_clear()
-                mylcd.lcd_display_string('Init. 4G modem  ', 1)
-                mylcd.lcd_display_string('Successful      ', 2)
-
-            # Previously i2c LCD initialization are failed
-            else:
-                # Write to logger
-                if backLogger == True:
-                    logger.info("DEBUG_LCD: Init. 4G modem")
-                    logger.info("DEBUG_LCD: Successful")
-                # Print statement
-                else:
-                    print "DEBUG_LCD: Init. 4G modem"
-                    print "DEBUG_LCD: Successful"
-                    
-            lcdOperSel = 10
-
-        elif lcdOperSel == 11:
-            # Previously i2c LCD initialization are successful
-            if i2cLcd == True:
-                mylcd.lcd_clear()
-                mylcd.lcd_display_string('Init. NC2VPN    ', 1)
-                mylcd.lcd_display_string('Successful      ', 2)
-
-            # Previously i2c LCD initialization are failed
-            else:
-                # Write to logger
-                if backLogger == True:
-                    logger.info("DEBUG_LCD: Init. NC2VPN")
-                    logger.info("DEBUG_LCD: Successful")
-                # Print statement
-                else:
-                    print "DEBUG_LCD: Init. NC2VPN"
-                    print "DEBUG_LCD: Successful"
-                    
-            # Delay a bit, to display another info
-            time.sleep(3)
-
-            lcdOperSel = 0
-            lcdDlyStatCnt = 0
-            lcdBlTimeOut = 0
-
-        elif lcdOperSel == 12:
-            # Previously i2c LCD initialization are successful
-            if i2cLcd == True:
-                mylcd.lcd_clear()
-                # Write to LCD info
-                mylcd.lcd_display_string('DECRYPT Process ', 1)
-                mylcd.lcd_display_string('Failed!         ', 2)
-
-            # Previously i2c LCD initialization are failed
-            else:
-                # Write to logger
-                if backLogger == True:
-                    logger.info("DEBUG_LCD: DECRYPT Process")
-                    logger.info("DEBUG_LCD: Failed!")
-                # Print statement
-                else:
-                    print "DEBUG_LCD: DECRYPT Process"
-                    print "DEBUG_LCD: Failed!"
-
-            # Delay a bit, to display another info
-            time.sleep(3)
-
-            lcdOperSel = 0
-            lcdDlyStatCnt = 0
-            lcdBlTimeOut = 0
-            
-        elif lcdOperSel == 13:
-            # Previously i2c LCD initialization are successful
-            if i2cLcd == True:
-                mylcd.lcd_clear()
-                # Write to LCD info
-                mylcd.lcd_display_string('ENCRYPT Process ', 1)
-                mylcd.lcd_display_string('Failed!         ', 2)
-
-            # Previously i2c LCD initialization are failed
-            else:
-                # Write to logger
-                if backLogger == True:
-                    logger.info("DEBUG_LCD: ENCRYPT Process")
-                    logger.info("DEBUG_LCD: Failed!")
-                # Print statement
-                else:
-                    print "DEBUG_LCD: ENCRYPT Process"
-                    print "DEBUG_LCD: Failed!"
-
-            # Delay a bit, to display another info
-            time.sleep(3)
-
-            lcdOperSel = 0
-            lcdDlyStatCnt = 0
-            lcdBlTimeOut = 0
-
-        elif lcdOperSel == 14:
-            # Previously i2c LCD initialization are successful
-            if i2cLcd == True:
-                mylcd.lcd_clear()
-                # Write to LCD info
-                mylcd.lcd_display_string('Init. Radio Svr ', 1)
-                mylcd.lcd_display_string('Successful      ', 2)
-
-            # Previously i2c LCD initialization are failed
-            else:
-                # Write to logger
-                if backLogger == True:
-                    logger.info("DEBUG_LCD: Init. Radio Svr")
-                    logger.info("DEBUG_LCD: Successful")
-                # Print statement
-                else:
-                    print "DEBUG_LCD: Init. Radio Svr"
-                    print "DEBUG_LCD: Successful"
-                    
-            # Delay a bit, to display another info
-            time.sleep(3)
-
-            lcdOperSel = 0
-            lcdDlyStatCnt = 0
-            lcdBlTimeOut = 0
+                print "DEBUG_LCD: LCD FAILED!"
             
 # Check UPS lite HAT battery status
 def checkBattStatus (threadname, delay):
@@ -1871,24 +1938,44 @@ def checkBattStatus (threadname, delay):
     while True:
         # Loop every 0.5s
         time.sleep(delay)
-        
-        delayRdBatt += 1
 
-        # Read current battery voltage every 5s
-        if delayRdBatt == 10:
-            # Previously i2c LCD initialization are successful
-            if i2cUps == True:
-                # Read current battery voltage and capacity
-                # Stored it to local variable
-                lcdBattVolt = readBattVoltage(i2cBus)
-                lcdBattCap = readBattCapacity(i2cBus)
+        # Try execution
+        try:
+            delayRdBatt += 1
 
-            # Previously i2c LCD initialization are failed
+            # Read current battery voltage every 5s
+            if delayRdBatt == 10:
+                # Previously i2c LCD initialization are successful
+                if i2cUps == True:
+                    # Read current battery voltage and capacity
+                    # Stored it to local variable
+                    lcdBattVolt = readBattVoltage(i2cBus)
+                    lcdBattCap = readBattCapacity(i2cBus)
+
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_BATT: Volt: %5.2fV" % lcdBattVolt)
+                        logger.info("DEBUG_BATT: Cap: %5i%%" % lcdBattCap)
+                    # Print statement
+                    else:
+                        print "DEBUG_BATT: Volt: %5.2fV" % lcdBattVolt
+                        print "DEBUG_BATT: Cap: %5i%%" % lcdBattCap
+
+                # Previously i2c LCD initialization are failed
+                else:
+                    lcdBattVolt = 'NA'
+                    lcdBattCap = 'NA'
+                    
+                delayRdBatt = 0
+
+        # Error in execution
+        except:
+            # Write to logger
+            if backLogger == True:
+                logger.info("DEBUG_BATT: UPS-Lite FAILED!")
+            # Print statement
             else:
-                lcdBattVolt = 'NA'
-                lcdBattCap = 'NA'
-                
-            delayRdBatt = 0
+                print "DEBUG_BATT: UPS-Lite FAILED!"
 
 # Check and monitor USB thumb drive plug in status
 def checkUSBStatus (threadname, delay):
