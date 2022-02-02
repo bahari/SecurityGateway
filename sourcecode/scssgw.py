@@ -62,32 +62,38 @@
 #
 #############################################################################################################
 
+from __future__ import unicode_literals
 import os, re, sys, time, socket
 import thread
 import logging
 import logging.handlers
 import subprocess
 import struct
-import smbus
+#import smbus
 import pyinotify
-import I2C_LCD_driver
+#import I2C_LCD_driver
 import pyudev
+
+import os.path
+from os import path
 
 # Global variable declaration
 backLogger         = False    # Macro for logger
 raspiIO            = False    # Macro for pi zero w IO interfacing
 radioMode          = False    # Macro for radio mode functionalities
+ubuntuTouch        = False    # Macro for ubuntu touch devices
 radioOpt           = 0        # Macro for radio data mode of transmission
 radioValid         = False    # Flag to indicate SDR radio server are successfully initiated
 dCryptProc         = False    # Flag to indicate decryption process are successfully done 
 eCryptProc         = False    # Flag to indicate encryption process are successfully done
-pingValid          = False    # Flag to indicate the client machine are already connected
 tunnelValid        = False    # Flag to indicate the VPN tunnel are successfully initiated
 net4gValid         = False    # Flag to indicate 4G network are successfully initiated
 scrollUP           = False    # Scroll UP process flag during tact switch is pressed
 scrollDWN          = False    # Scroll DOWN process flag during tact switch is pressed
 i2cUps             = False    # Flag to check UPS-Lite i2c initialization status
 i2cLcd             = False    # Flag to check LCD i2c initialization status
+initPihole         = False
+wifiShutDown       = False
 pubKeyPath         = ''       # Public key to decrypt the USB thumb drive
 usbMountPath       = ''       # USB mount path directory
 nc2VpnKeyPath      = ''       # NC2VPN encrypted key file directory location 
@@ -108,34 +114,46 @@ vpnAtmptCnt        = 0        # VPN tunnel connection attempt counter
 # Check for macro arguments
 if (len(sys.argv) > 1):
     tmpFlag = False
+    tmpFlagg = False
     for x in sys.argv:
         if x != 'scssgw.py':
             # Get the SIM card public IP address
             if tmpFlag == False:
                 publicIPaddr = x
                 tmpFlag = True
+
+            # Get the rest of the parameters 
             elif tmpFlag == True:
-                # Optional macro if we want to enable text file log
-                if x == 'LOGGER':
-                    backLogger = True
-                # Optional macro if we want to enable raspberry pi IO interfacing
-                elif x == 'RASPI':
-                    raspiIO = True
-                elif x == 'RADIO':
-                     radioMode = True
-                # Option for soapy sdr server
-                elif x == 'OPT01':
-                    radioOpt = 0
-                # Option for RSPTCP server
-                elif x == 'OPT02':
-                    radioOpt = 1
-                # Option for custom gnuradio radio data server
-                elif x == 'OPT3':
-                    radioOpt = 2
+                # Get client IP address for pinging process
+                if tmpFlagg == False:
+                    clientIPAddr = x
+                    tmpFlagg = True
+                elif tmpFlagg == True:
+                    # Optional macro if we want to enable text file log
+                    if x == 'LOGGER':
+                        backLogger = True
+                    # Optional macro if we want to enable raspberry pi IO interfacing
+                    elif x == 'RASPI':
+                        raspiIO = True
+                    # Optional macro for radio gateway functionality
+                    elif x == 'RADIO':
+                         radioMode = True
+                    # Option for soapy sdr server
+                    elif x == 'OPT01':
+                        radioOpt = 0
+                    # Option for RSPTCP server
+                    elif x == 'OPT02':
+                        radioOpt = 1
+                    # Option for custom gnuradio radio data server
+                    elif x == 'OPT3':
+                        radioOpt = 2
+                    # Option for ubuntu touch devices
+                    elif x == 'UBUNTU':
+                        ubuntuTouch = True
 
 # Setup log file 
 if backLogger == True:
-    path = os.path.dirname(os.path.abspath(__file__))
+    paths = os.path.dirname(os.path.abspath(__file__))
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logfile = logging.handlers.TimedRotatingFileHandler('/tmp/secgw.log', when="midnight", backupCount=3)
@@ -146,12 +164,11 @@ if backLogger == True:
 # Print macro arguments for debugging purposes
 # Write to logger
 if backLogger == True:
-    logger.info("DEBUG_MACRO: Arguments: %s %s %s %s %s" % (publicIPaddr, backLogger, raspiIO, radioMode, radioOpt))
+    logger.info("DEBUG_MACRO: Arguments: %s %s %s %s %s %s" % (publicIPaddr, backLogger, raspiIO, radioMode, radioOpt, str(ubuntuTouch)))
 # Print statement
 else:
-    print "DEBUG_MACRO: Arguments: %s %s %s %s %s" % (publicIPaddr, backLogger, raspiIO, radioMode, radioOpt)
+    print "DEBUG_MACRO: Arguments: %s %s %s %s %s %s" % (publicIPaddr, backLogger, raspiIO, radioMode, radioOpt, str(ubuntuTouch))
                 
-
 # Setup for pi zero w GPIO interfacing
 if raspiIO == True:
     import RPi.GPIO as GPIO
@@ -176,8 +193,17 @@ if raspiIO == True:
     
 # Retrieve public key stored location
 pubKeyPath = '/sources/common/sourcecode/piSecurityGateway/key.public'
-# USB thumb drive mount path
-usbMountPath = '/media/root'
+
+# For Raspberry PI controller
+if ubuntuTouch == False:
+    # USB thumb drive mount path
+    usbMountPath = '/media/root'
+
+# For Ubuntu Touch smartphone
+else:
+    # USB thumb drive mount path
+    usbMountPath = '/media/phablet'
+    
 # nc2vpn key path - Encrypted file
 nc2VpnKeyPath = '/sources/common/vpn-client-key/nc2vpn-key'
 # nc2vpn key temporary path - Decrypted file
@@ -185,21 +211,26 @@ nc2VpnKeyTPath = '/sources/common/vpn-client-key/temp-nc2vpn-key'
 # Client computer hard coded IP address
 clientIPAddr = '192.168.4.201'
 
-# Checking the LCD i2c device availability
-try:
-    # Initialize i2c bus for USB lite
-    i2cBus = smbus.SMBus(1)
-    i2cUps = True
-except:
-    i2cUps = False
+# Only check when using Raspberry PI controller
+if ubuntuTouch == False:
+    import smbus
+    import I2C_LCD_driver
+    
+    # Checking the LCD i2c device availability
+    try:
+        # Initialize i2c bus for USB lite
+        i2cBus = smbus.SMBus(1)
+        i2cUps = True
+    except:
+        i2cUps = False
 
-# Checking the UPS-Lite i2c device availability
-try:    
-    # Initialize i2c bus for LCD
-    mylcd = I2C_LCD_driver.lcd()
-    i2cLcd = True
-except:
-    i2cLcd = False
+    # Checking the UPS-Lite i2c device availability
+    try:    
+        # Initialize i2c bus for LCD
+        mylcd = I2C_LCD_driver.lcd()
+        i2cLcd = True
+    except:
+        i2cLcd = False
 
 # Class for USB thumb drive insertion automatic notification
 # Also include encrypt and decrypt nc2vpn key process
@@ -246,8 +277,12 @@ class EventHandler(pyinotify.ProcessEvent):
 
             # NO error after command execution
             if stderr == None:
+                # Continue with decrypt process
                 if 'key.private' in stdout:
                     self.cryptoType = True
+                # Continue with encrypt process
+                else:
+                    self.cryptoType = False
             
             # Start decrypt process
             if self.cryptoType == True:
@@ -645,7 +680,7 @@ class EventHandler(pyinotify.ProcessEvent):
                     lcdOperSel = 13
                     # Set status of decrypt process
                     eCryptProc = False
-
+    
 # Doing string manipulations
 def mid(s, offset, amount):
     return s[offset-1:offset+amount-1]
@@ -668,11 +703,996 @@ def readBattCapacity(bus):
 
     return capacity
 
+# Check the routing table IP address
+def chkRouteAddIpAddress (ipAddress, ipAddressCnt):
+    existCnt = 0
+    retResult = False
+    # Execute the command
+    process = subprocess.Popen(['route'], shell=True, stdout=subprocess.PIPE)
+    # Loop the result
+    while True:
+        output = process.stdout.readline()
+        if output == '' and process.poll() is not None:
+            break
+        if output:
+            tempOut = output.strip()
+            #print tempOut
+            # Check through IP address buffer
+            for a in range(ipAddressCnt):
+                # IP address exist inside routing table
+                if ipAddress[a] in tempOut:
+                    #print 'masuk'
+                    #print ipAddress[a]
+                    existCnt += 1    
+
+    if existCnt > 0:
+        retResult = True
+            
+    return retResult
+                
+# KILL all openvpn instances
+def terminateOpenVpn (command):
+    openVpnPid = []
+    openVpnCnt = 0
+
+    # Execute the command
+    process = subprocess.Popen([command], shell=True, stdout=subprocess.PIPE)
+    # Loop the result
+    while True:
+        output = process.stdout.readline()
+        if output == '' and process.poll() is not None:
+            break
+        if output:
+            tempOut = output.strip()
+
+            foundDig = False
+            pidNo = ''
+            respLen = len(tempOut)
+            
+            # Go through the read line
+            for a in range(0, (respLen + 1)):
+                oneChar = mid(tempOut, a, 1)
+                # Check PID digit
+                if oneChar.isdigit():
+                    foundDig = True
+                    pidNo += oneChar
+                elif foundDig == True and oneChar == ' ':
+                    break
+
+            # First array index
+            if openVpnCnt == 0:
+                openVpnPid = [pidNo]
+                openVpnCnt += 1           
+
+            # Subsequent array index
+            else:
+                openVpnPid.append(pidNo)
+                openVpnCnt += 1
+
+    return openVpnPid, openVpnCnt
+                
+# Get the openvpn routing info
+def getOpenVpnRouteInfo (command):
+    routeInfo = []
+    routeInfoCnt = 0
+    timeOut = 0
+    openVpnStat = False
+    
+    # Execute the command
+    process = subprocess.Popen([command], shell=True, stdout=subprocess.PIPE)
+    # Loop until get ip routing info
+    while True:
+        output = process.stdout.readline()
+        if output == '' and process.poll() is not None:
+            break
+        if output:
+            tempOut = output.strip()
+            # Getting the ip routing info
+            if 'ip route add' in tempOut:
+                # Get the 'ip route add' segment
+                ipRouteCmd = ''
+                #spaceCnt = 0
+                bSlashFound = False
+                getIpRoute = False
+                lenOut = len(tempOut)
+
+                # Go through the read line
+                for a in range(0, (lenOut + 1)):
+                    oneChar = mid(tempOut, a, 1)
+                    # Check for back slash character
+                    if oneChar == '/' and getIpRoute == False:
+                        ipRouteCmd += oneChar
+                        getIpRoute = True
+                    # Start get the ip route add rules 
+                    elif getIpRoute == True:
+                        ipRouteCmd += oneChar
+                        
+##                    # Count space char 
+##                    if oneChar == ' ' and getIpRoute == False:
+##                        spaceCnt += 1
+##                        if spaceCnt == 5:
+##                            getIpRoute = True
+##
+##                    # Start get the ip route add rules 
+##                    elif getIpRoute == True:
+##                        ipRouteCmd += oneChar 
+
+                # First array index
+                if routeInfoCnt == 0:
+                    routeInfo = [ipRouteCmd]
+                    routeInfoCnt += 1    
+
+                # Subsequent array index
+                else:
+                    routeInfo.append(ipRouteCmd)
+                    routeInfoCnt += 1
+
+            # Exit loop
+            elif 'Initialization Sequence Completed' in tempOut:
+                openVpnStat = True
+                break    
+            
+            #time.sleep(1)
+
+            timeOut += 1
+            # 1 minute time out in case failed to initiate openvpn
+            if timeOut == 500:
+                openVpnStat = False
+                break
+
+    # Previously initiate openvpn successfull
+    if openVpnStat == True:
+        # Kill back the openvpn instances
+        openVpnPID = []    # Current openvpn PID instances
+        openVpnPIDCnt = 0  # Current openvpn PID counter
+
+        # Get openvpn PID
+        openVpnPID, openVpnPIDCnt = terminateOpenVpn('ps aux | grep -v grep | grep openvpn')
+        # Openvpn instances exist
+        if openVpnPIDCnt > 0:
+            # Execute kill instance command
+            for a in range (openVpnPIDCnt):
+                tempArgs = 'kill -9 ' + openVpnPID[a]
+                
+                out = subprocess.Popen([tempArgs], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                stdout,stderr = out.communicate()
+                
+                # NO error after command execution
+                if stderr == None:
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_UTOUCH: KILL OpenVPN instance [%s] SUCCESSFULL" % (openVpnPID[a]))
+                    # Print statement
+                    else:
+                        print "DEBUG_UTOUCH: KILL OpenVPN instance [%s] SUCCESSFULL" % (openVpnPID[a])
+
+        # There is NO openvpn instances
+        else:
+            # Write to logger
+            if backLogger == True:
+                logger.info("DEBUG_UTOUCH: NO OpenVPN instance EXIST!")
+            # Print statement
+            else:
+                print "DEBUG_UTOUCH: NO OpenVPN instance EXIST!" 
+    
+    return routeInfo, routeInfoCnt
+
+# Check and monitor USB thumb drive plug in status
+def checkUSBUtouchStatus (threadname, delay):
+    global eCryptProc
+    global dCryptProc
+    global initPihole
+    global wifiShutDown
+    
+    # Forever loop
+    while True:
+        # Loop every 0.5s
+        time.sleep(delay)
+
+        context = pyudev.Context()
+        monitor = pyudev.Monitor.from_netlink(context)
+        monitor.filter_by(subsystem='usb')
+
+        monitor.start()
+        for device in iter(monitor.poll, None):
+            if device.action != 'add':
+                if eCryptProc == True or dCryptProc == True:
+                    # STOP VPN tunnel
+                    openVpnPID = []    # Current openvpn PID instances
+                    openVpnPIDCnt = 0  # Current openvpn PID counter
+
+                    # Get openvpn PID
+                    openVpnPID, openVpnPIDCnt = terminateOpenVpn('ps aux | grep -v grep | grep openvpn')
+                    # Openvpn instances exist
+                    if openVpnPIDCnt > 0:
+                        # Execute kill instance command
+                        for a in range (openVpnPIDCnt):
+                            tempArgs = 'kill -9 ' + openVpnPID[a]
+                            
+                            out = subprocess.Popen([tempArgs], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                            stdout,stderr = out.communicate()
+                            
+                            # NO error after command execution
+                            if stderr == None:
+                                # Write to logger
+                                if backLogger == True:
+                                    logger.info("DEBUG_USBUTOUCH: KILL OpenVPN instance [%s] SUCCESSFULL" % (openVpnPID[a]))
+                                # Print statement
+                                else:
+                                    print "DEBUG_USBUTOUCH: KILL OpenVPN instance [%s] SUCCESSFULL" % (openVpnPID[a])
+
+                    # There is NO openvpn instances
+                    else:
+                        # Write to logger
+                        if backLogger == True:
+                            logger.info("DEBUG_USBUTOUCH: NO OpenVPN instance EXIST!")
+                        # Print statement
+                        else:
+                            print "DEBUG_USBUTOUCH: NO OpenVPN instance EXIST!"
+
+                    dCryptProc = False
+                    eCryptProc = False
+                    initPihole = False
+                    wifiShutDown = False
+                    
+# Communication and process monitoring for Ubuntu Touch smartphone
+def uTouchCommProc (threadname, delay):
+    global dCryptProc
+    global nc2VpnKeyTPath
+    global nc2VpnKeyPath
+    global initPihole
+    global wifiShutDown
+    global eCryptProc
+    global backLogger
+    global currUSBPath
+    
+    networkManFailed = False
+    initOthers = False
+    nc2VpnTunn = False
+        
+    fileDel = False
+    fileExist = False
+    fileName = ''
+        
+    checkProcCnt = 0
+    pingAtmptCnt = 0
+    vpnTunAtmptCnt = 0
+    piHoleCnt = 0
+    
+    ipRouteArr = []  # Ip route add command that not successfully initiate by openvpn
+    ipRouteCnt = 0   # Ip route add index counter
+    execSuccCnt = 0  # Ip route add process success counter
+        
+    # Forever loop
+    while True:
+        # Loop every 0.5s
+        time.sleep(delay)
+
+        # Previously there was encryption process take place
+        # Start decryption process for secure gateway initialization
+        if eCryptProc == True:
+            # Clear encryption process
+            eCryptProc = False
+            # Set status of decrypt process
+            dCryptProc = True
+                        
+##            # Write to logger
+##            if backLogger == True:
+##                logger.info("DEBUG_UTOUCH: Start DECRYPT process")
+##            # Print statement
+##            else:
+##                print "DEBUG_UTOUCH: Start DECRYPT process"
+##
+##            # Delete the contents of nc2vpn key inside temporary folder
+##            tempArgs = 'cd ' + nc2VpnKeyTPath + ';rm -rf *'
+##            out = subprocess.Popen([tempArgs], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+##            stdout,stderr = out.communicate()
+##
+##            # NO error after command execution
+##            if stderr == None:
+##                # Write to logger
+##                if backLogger == True:
+##                    logger.info("DEBUG_UTOUCH: Delete temporary nc2vpn key files successful")
+##                # Print statement
+##                else:
+##                    print "DEBUG_UTOUCH: Delete temporary nc2vpn key files successful"
+##
+##                # Wait before execute another command
+##                time.sleep(1)
+##            
+##                # Start decrypt the nc2vpn key and stored it inside temporary folder
+##                # Command:
+##                # python3 decrypt.py --source=/path/to/your/drive/ --destination=/path/to/your/drive/ --private-key=/path/to/your/key.private
+##                tempPrivKeyPath = currUSBPath + '/key.private'
+##                out = subprocess.Popen(['python3', 'decrypt.py', '--source', nc2VpnKeyPath, '--destination', nc2VpnKeyTPath, '--private-key', tempPrivKeyPath], \
+##                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+##                stdout,stderr = out.communicate()
+##
+##                # NO error after command execution
+##                if stderr == None:
+##                    if 'Decrypting:' in stdout:
+##                        # Write to logger
+##                        if backLogger == True:
+##                            logger.info("DEBUG_UTOUCH: Decrypt nc2vpn key successful")
+##                        # Print statement
+##                        else:
+##                            print "DEBUG_UTOUCH: Decrypt nc2vpn key successful"
+##
+##                        # Clear encryption process
+##                        eCryptProc = False
+##                        # Set status of decrypt process
+##                        dCryptProc = True
+##                    # Operation failed
+##                    else:
+##                        # Write to logger
+##                        if backLogger == True:
+##                            logger.info("DEBUG_UTOUCH: Decrypt nc2vpn key FAILED!")
+##                            logger.info("DEBUG_UTOUCH: DECRYPT process FAILED!")
+##                        # Print statement
+##                        else:
+##                            print "DEBUG_UTOUCH: Decrypt nc2vpn key FAILED!"
+##                            print "DEBUG_UTOUCH: DECRYPT process FAILED!"
+##
+##                        # Set status of decrypt process
+##                        dCryptProc = False
+##                        
+##                # Operation failed
+##                else:
+##                    # Write to logger
+##                    if backLogger == True:
+##                        logger.info("DEBUG_UTOUCH: Decrypt nc2vpn key FAILED!")
+##                        logger.info("DEBUG_UTOUCH: DECRYPT process FAILED!")
+##                    # Print statement
+##                    else:
+##                        print "DEBUG_UTOUCH: Decrypt nc2vpn key FAILED!"
+##                        print "DEBUG_UTOUCH: DECRYPT process FAILED!"
+##
+##                    # Set status of decrypt process
+##                    dCryptProc = False
+##                        
+##            # Operation failed
+##            else:
+##                # Write to logger
+##                if backLogger == True:
+##                    logger.info("DEBUG_UTOUCH: Delete temporary nc2vpn key files FAILED!")
+##                    logger.info("DEBUG_UTOUCH: DECRYPT process FAILED!")
+##                # Print statement
+##                else:
+##                    print "DEBUG_UTOUCH: Delete temporary nc2vpn key files FAILED!"
+##                    print "DEBUG_UTOUCH: DECRYPT process FAILED!"
+##
+##                # Set status of decrypt process
+##                dCryptProc = False
+                
+        # Only check other networks process when USB thumb drive are plug in
+        elif dCryptProc == True:
+            # Start back WIFI
+            if wifiShutDown == True:
+                # Enable WIFI radio hardware    
+                out = subprocess.Popen(["nmcli radio wifi on"], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                stdout,stderr = out.communicate()
+
+                # NO error after command execution
+                if stderr == None:
+                    wifiShutDown = False
+                    
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_UTOUCH: Bring UP WIFI SUCCESSFULL")
+                    # Print statement
+                    else:
+                        print "DEBUG_UTOUCH: Bring UP WIFI SUCCESSFULL"
+
+                    # Wait before execute another command
+                    time.sleep(1)
+                            
+                    # Restart network-manager service
+                    out = subprocess.Popen(["service network-manager restart"], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    stdout,stderr = out.communicate()
+
+                    # NO error after command execution
+                    if stderr == None:
+                        # Restart network-manager successful
+                        if 'start/running' in stdout:
+                            # Write to logger
+                            if backLogger == True:
+                                logger.info("DEBUG_UTOUCH: RESTART network-manager SUCCESSFULL")
+                            # Print statement
+                            else:
+                                print "DEBUG_UTOUCH: RESTART network-manager SUCCESSFULL"
+                
+                            networkManFailed = False  # Clear network-manager check flag, all is running well, no need to check it
+                            initOthers = True         # Set flag for process initialization and status check
+                                
+                        # Restart network-manager failed!
+                        else:
+                            # Write to logger
+                            if backLogger == True:
+                                logger.info("DEBUG_UTOUCH: RESTART network-manager FAILED!, will restart back in the next cycle")
+                            # Print statement
+                            else:
+                                print "DEBUG_UTOUCH: RESTART network-manager FAILED!, will restart back in the next cycle"
+
+                            networkManFailed = True  # Set network-manager check flag, network problem, retry to start back on the next process cycle
+                            initOthers = False       # Clear flag for process initialization and status check, network problem, drop the checking
+                    
+                    # Command operation failed
+                    else:
+                        # Write to logger
+                        if backLogger == True:
+                            logger.info("DEBUG_UTOUCH: RESTART network-manager FAILED!, will restart back in the next cycle")
+                        # Print statement
+                        else:
+                            print "DEBUG_UTOUCH: RESTART network-manager FAILED!, will restart back in the next cycle"
+
+                        networkManFailed = True  # Set network-manager check flag, network problem, retry to start back on the next cycle
+                        initOthers = False       # Clear flag for process initialization and status check, network problem, drop the checking
+
+                # Command operation failed
+                else:
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_UTOUCH: Bring UP WIFI FAILED!, will restart back in the next cycle")
+                    # Print statement
+                    else:
+                        print "DEBUG_UTOUCH: Bring UP WIFI FAILED!, will restart back in the next cycle"
+
+            # Previously network-manager failed to start
+            elif networkManFailed == True:
+                # Restart pihole DNS server
+                out = subprocess.Popen(["pihole restartdns"], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                stdout,stderr = out.communicate()
+
+                # NO error after command execution
+                if stderr == None:
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_UTOUCH: Initialize pihole DNS SUCCESSFULL")
+                    # Print statement
+                    else:
+                        print "DEBUG_UTOUCH: Initialize pihole DNS SUCCESSFULL"
+
+                    # Wait before execute another command
+                    time.sleep(1)
+                    
+                    # Restart network-manager service
+                    out = subprocess.Popen(["service network-manager restart"], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    stdout,stderr = out.communicate()
+
+                    # NO error after command execution
+                    if stderr == None:
+                        # Restart network-manager successful
+                        if 'start/running' in stdout:
+                            # Write to logger
+                            if backLogger == True:
+                                logger.info("DEBUG_UTOUCH: RESTART network-manager SUCCESSFULL")
+                            # Print statement
+                            else:
+                                print "DEBUG_UTOUCH: RESTART network-manager SUCCESSFULL"
+
+                            if ipRouteCnt > 0:
+                                # Execute ip route add command
+                                for a in range (ipRouteCnt):
+                                    out = subprocess.Popen([ipRouteArr[a]], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                    stdout,stderr = out.communicate()
+                                    
+                                    # NO error after command execution
+                                    if stderr == None:
+                                        # Write to logger
+                                        if backLogger == True:
+                                            logger.info("DEBUG_UTOUCH: IP route add [%s] SUCCESSFULL" % (ipRouteArr[a]))
+                                        # Print statement
+                                        else:
+                                            print "DEBUG_UTOUCH: IP route add [%s] SUCCESSFULL" % (ipRouteArr[a])
+
+                            networkManFailed = False  # Clear network-manager check flag, all is running well, no need to check it
+                            initOthers = True         # Set flag for process initialization and status check
+                            checkProcCnt = 0
+                                                    
+                        # Restart network-manager failed!
+                        else:
+                            # Write to logger
+                            if backLogger == True:
+                                logger.info("DEBUG_UTOUCH: RESTART network-manager FAILED!, will restart back in the next cycle")
+                            # Print statement
+                            else:
+                                print "DEBUG_UTOUCH: RESTART network-manager FAILED!, will restart back in the next cycle"
+                            
+                    # Command operation failed
+                    else:
+                        # Write to logger
+                        if backLogger == True:
+                            logger.info("DEBUG_UTOUCH: RESTART network-manager FAILED! [stderr], will restart back in the next cycle")
+                        # Print statement
+                        else:
+                            print "DEBUG_UTOUCH: RESTART network-manager FAILED! [stderr], will restart back in the next cycle"
+
+                # Command operation failed
+                else:
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("DEBUG_UTOUCH: Initialize pihole DNS FAILED! [stderr], will reinitialize back in the next cycle")
+                    # Print statement
+                    else:
+                        print "DEBUG_UTOUCH: Initialize pihole DNS FAILED! [stderr], will reinitialize back in the next cycle"    
+
+            # Initialization and checking for others parameter
+            if initOthers == True:
+                # Test the 4G network by executing ping process
+                if checkProcCnt == 0:
+                    # Ping every 60 seconds
+                    #if pingChkCnt == 60:
+                    #    pingChkCnt = 0
+
+                    out = subprocess.Popen(["ping -c 1 google.com"], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
+                    stdout,stderr = out.communicate()
+
+                    # NO error after command execution
+                    if stderr == None:
+                        # 4G network OK
+                        if '1 received' in stdout:
+                            checkProcCnt = 1 # Pihole restart DNS and pihole status check, on next process cycle
+                            pingAtmptCnt = 0
+                            
+                            # Write to logger
+                            if backLogger == True:
+                                logger.info("DEBUG_UTOUCH: 4G network OK")
+                            # Print statement
+                            else:
+                                print "DEBUG_UTOUCH: 4G network OK"
+
+                        # 4G network FAILED!
+                        elif '0 received' or 'failure' in stdout:
+                            # Write to logger
+                            if backLogger == True:
+                                logger.info("DEBUG_UTOUCH: 4G network FAILED!")
+                            # Print statement
+                            else:
+                                print "DEBUG_UTOUCH: 4G network FAILED!"
+
+                            # Increment for ping check attempt
+                            pingAtmptCnt += 1
+                            # 10 attempt still network failed, prepare to restart network-manager
+                            if pingAtmptCnt == 10:
+                                # Write to logger
+                                if backLogger == True:
+                                    logger.info("DEBUG_UTOUCH: 4G network FAILED!, prepare to restart network-manager")
+                                # Print statement
+                                else:
+                                    print "DEBUG_UTOUCH: 4G network FAILED!, prepare to restart network-manager"
+                                
+                                initOthers = False        # Disable aother process initialization and checking
+                                networkManFailed = True   # Restart network-manager
+                                checkProcCnt = 0          # Reset check process counter
+                                pingAtmptCnt = 0
+
+                    # Command operation failed
+                    else:
+                        # Write to logger
+                        if backLogger == True:
+                            logger.info("DEBUG_UTOUCH: 4G network FAILED!, prepare to restart network-manager")
+                        # Print statement
+                        else:
+                            print "DEBUG_UTOUCH: 4G network FAILED!, prepare to restart network-manager"
+
+                        # Increment for ping check attempt
+                        pingAtmptCnt += 1
+                        # 60 attempt still network failed, prepare to restart network-manager
+                        if pingAtmptCnt == 60:
+                            # Write to logger
+                            if backLogger == True:
+                                logger.info("DEBUG_UTOUCH: 4G network FAILED!, prepare to restart network-manager")
+                            # Print statement
+                            else:
+                                print "DEBUG_UTOUCH: 4G network FAILED!, prepare to restart network-manager"
+                            
+                            initOthers = False        # Disable aother process initialization and checking
+                            networkManFailed = True   # Restart network-manager
+                            checkProcCnt = 0          # Reset check process counter
+                            pingAtmptCnt = 0
+
+                # Start nc2vpn tunnel if not start yet and continuously monitored the tunnel
+                elif checkProcCnt == 1:
+                    # First initialization of the nc2vpn tunnel
+                    if nc2VpnTunn == False:
+                        fileDel = False
+
+                        # Check and retrieve nc2vpn .ovpn file name
+                        tempData = os.listdir(nc2VpnKeyTPath)
+                                                
+                        # Go through the resulted data
+                        for files in tempData:
+                            if '.ovpn' in files:
+                                fileName = files
+                                fileExist = True  # Set a flag to indicate vpn file already previously decrypted   
+                                break
+
+                        # NO file or previously has been deleted, decrypt back nc2vpn key
+                        if fileExist == False:
+                            # Start decrypt the nc2vpn key and stored it inside temporary folder
+                            # Command:
+                            # python3 decrypt.py --source=/path/to/your/drive/ --destination=/path/to/your/drive/ --private-key=/path/to/your/key.private
+                            tempPrivKeyPath = currUSBPath + '/key.private'
+                            out = subprocess.Popen(['python3', 'decrypt.py', '--source', nc2VpnKeyPath, '--destination', nc2VpnKeyTPath, '--private-key', tempPrivKeyPath], \
+                                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                            stdout,stderr = out.communicate()
+
+                            # NO error after command execution
+                            if stderr == None:
+                                if 'Decrypting:' in stdout:
+                                    # Write to logger
+                                    if backLogger == True:
+                                        logger.info("DEBUG_UTOUCH: Decrypt nc2vpn key successful")
+                                    # Print statement
+                                    else:
+                                        print "DEBUG_UTOUCH: Decrypt nc2vpn key successful"
+
+                                # Operation failed, will retry to decrypt on the next process cycle
+                                else:
+                                    # Write to logger
+                                    if backLogger == True:
+                                        logger.info("DEBUG_UTOUCH: Decrypt nc2vpn key FAILED!")
+                                    # Print statement
+                                    else:
+                                        print "DEBUG_UTOUCH: Decrypt nc2vpn key FAILED!"
+
+                            # Operation failed, will retry to decrypt on the next process cycle
+                            else:
+                                # Write to logger
+                                if backLogger == True:
+                                    logger.info("DEBUG_UTOUCH: Decrypt nc2vpn key FAILED!")
+                                # Print statement
+                                else:
+                                    print "DEBUG_UTOUCH: Decrypt nc2vpn key FAILED!"
+
+                        # Temporary nc2vpn key exist
+                        else:
+                            # Clear the IP route add buffer
+                            if ipRouteCnt > 0:
+                                for a in range (ipRouteCnt):
+                                    ipRouteArr[a] = ''
+                                ipRouteCnt = 0
+                                
+                            # Get the ip route add info    
+                            tempArgs = 'cd ' + nc2VpnKeyTPath + ';openvpn --config ' + fileName
+                            ipRouteArr, ipRouteCnt = getOpenVpnRouteInfo(tempArgs)
+                            # Previously successfully get the ip route add info
+                            if ipRouteCnt > 0:
+                                # Wait before execute another command
+                                time.sleep(1)
+                        
+                                # START VPN tunnel
+                                tempArgs = 'cd ' + nc2VpnKeyTPath + ';openvpn --config ' + fileName + ' --daemon'
+                                out = subprocess.Popen([tempArgs], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                stdout,stderr = out.communicate()
+
+                                # NO error after command execution
+                                if stderr == None:
+                                    # Write to logger
+                                    if backLogger == True:
+                                        logger.info("DEBUG_UTOUCH: Init. OpenVPN sequence completed")
+                                    # Print statement
+                                    else:
+                                        print "DEBUG_UTOUCH: Init. OpenVPN sequence completed"
+                                
+                                    nc2VpnTunn = True  # Set a flag to check periodically vpn tunnel 
+                                    checkProcCnt = 0   # Reset check process counter, start with ping process, on next process cycle
+                                    
+                                # Command operation failed
+                                else:
+                                    # Write to logger
+                                    if backLogger == True:
+                                        logger.info("DEBUG_UTOUCH: Init. OpenVPN sequence FAILED! [stderr]")
+                                    # Print statement
+                                    else:
+                                        print "DEBUG_UTOUCH: Init. OpenVPN sequence FAILED! [stderr]"
+
+                            # Get the info failed
+                            else:
+                                # Write to logger
+                                if backLogger == True:
+                                    logger.info("DEBUG_UTOUCH: Init. OpenVPN sequence FAILED!")
+                                # Print statement
+                                else:
+                                    print "DEBUG_UTOUCH: Init. OpenVPN sequence FAILED!"
+                                
+                    # OpenVPN checking by checking tun0 interface 
+                    else:
+                        # Check tun0 interface
+                        out = subprocess.Popen(['ifconfig'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                        stdout,stderr = out.communicate()
+                        
+                        # NO error after command execution
+                        if stderr == None:
+                            # VPN tunnel exist
+                            if 'tun0' in stdout:
+                                # Delete previous decrypted vpn file, to ensure secured vpn transaction
+                                if fileDel == False:
+                                    # Delete the contents of nc2vpn key inside temporary folder
+                                    tempArgs = 'cd ' + nc2VpnKeyTPath + ';rm -rf *'
+                                    out = subprocess.Popen([tempArgs], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                    stdout,stderr = out.communicate()
+                                    
+                                    # NO error after command execution
+                                    if stderr == None:
+                                        # Write to logger
+                                        if backLogger == True:
+                                            logger.info("DEBUG_UTOUCH: Delete temporary nc2vpn key files successful")
+                                        # Print statement
+                                        else:
+                                            print "DEBUG_UTOUCH: Delete temporary nc2vpn key files successful"    
+
+                                    fileDel = True
+
+                                # Initiate ip route add process
+                                # Get the routing table IP address
+                                ipAddress = []
+                                ipAddressCnt = 0
+                                chkExist = False
+                                for a in range (ipRouteCnt):
+                                    foundChar = False
+                                    ipAddr = ''
+                                    respLen = len(ipRouteArr[a])
+                                    
+                                    # Go through the ip route array contents
+                                    for b in range(0, (respLen + 1)):
+                                        oneChar = mid(ipRouteArr[a], b, 1)
+                                        # Check the IP address
+                                        if oneChar.isdigit() or oneChar == '.':
+                                            foundChar = True
+                                            ipAddr += oneChar
+                                        elif foundChar == True and oneChar == '/':
+                                            break
+
+                                    # First array index
+                                    if ipAddressCnt == 0:
+                                        ipAddress = [ipAddr]
+                                        ipAddressCnt += 1
+                                        
+                                    # Subsequent array index
+                                    else:
+                                        ipAddress.append(ipAddr)
+                                        ipAddressCnt += 1
+
+                                # Start check the routing table
+                                chkExist = chkRouteAddIpAddress(ipAddress, ipAddressCnt)
+                                # Routing for openvpn IP address still not exist
+                                if chkExist == False:
+                                    # Execute ip route add command
+                                    for a in range (ipRouteCnt):
+                                        out = subprocess.Popen([ipRouteArr[a]], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                        stdout,stderr = out.communicate()
+                                        
+                                        # NO error after command execution
+                                        if stderr == None:
+                                            # Write to logger
+                                            if backLogger == True:
+                                                logger.info("DEBUG_UTOUCH: IP route add [%s] SUCCESSFULL" % (ipRouteArr[a]))
+                                            # Print statement
+                                            else:
+                                                print "DEBUG_UTOUCH: IP route add [%s] SUCCESSFULL" % (ipRouteArr[a])
+
+                                            execSuccCnt += 1
+                                        
+                                    # Previous IP route add process successfull
+                                    if execSuccCnt == ipRouteCnt:
+                                        # Write to logger
+                                        if backLogger == True:
+                                            logger.info("DEBUG_UTOUCH: IP route add process SUCCESSFULL")
+                                            logger.info("DEBUG_UTOUCH: Init. OpenVPN sequence completed")
+                                        # Print statement
+                                        else:
+                                            print "DEBUG_UTOUCH: IP route add process SUCCESSFULL"
+                                            print "DEBUG_UTOUCH: Init. OpenVPN sequence completed"
+
+                                        execSuccCnt = 0    
+                                        nc2VpnTunn = True  # Set a flag to check periodically vpn tunnel 
+                                        checkProcCnt = 0   # Reset check process counter, start with ping process, on next process cycle
+
+                                    # Previous IP route add process failed!
+                                    else:
+                                        # Write to logger
+                                        if backLogger == True:
+                                            logger.info("DEBUG_UTOUCH: IP route add process FAILED!")
+                                        # Print statement
+                                        else:
+                                            print "DEBUG_UTOUCH: IP route add process FAILED!"
+                                            
+                                        openVpnPID = []    # Current openvpn PID instances
+                                        openVpnPIDCnt = 0  # Current openvpn PID counter
+                                        
+                                        # Get openvpn PID
+                                        openVpnPID, openVpnPIDCnt = terminateOpenVpn('ps aux | grep -v grep | grep openvpn')
+                                        # Openvpn instances exist
+                                        if openVpnPIDCnt > 0:
+                                            # Execute kill instance command
+                                            for a in range (openVpnPIDCnt):
+                                                tempArgs = 'kill -9 ' + openVpnPID[a]
+                                                
+                                                out = subprocess.Popen([tempArgs], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                                stdout,stderr = out.communicate()
+                                                
+                                                # NO error after command execution
+                                                if stderr == None:
+                                                    # Write to logger
+                                                    if backLogger == True:
+                                                        logger.info("DEBUG_UTOUCH: KILL OpenVPN instance [%s] SUCCESSFULL" % (openVpnPID[a]))
+                                                    # Print statement
+                                                    else:
+                                                        print "DEBUG_UTOUCH: KILL OpenVPN instance [%s] SUCCESSFULL" % (openVpnPID[a])
+                                                    
+                                        # There is NO openvpn instances
+                                        else:
+                                            # Write to logger
+                                            if backLogger == True:
+                                                logger.info("DEBUG_UTOUCH: NO OpenVPN instance EXIST!")
+                                            # Print statement
+                                            else:
+                                                print "DEBUG_UTOUCH: NO OpenVPN instance EXIST!"
+
+                                # Routing for openvpn IP address already exist
+                                else:
+                                    # Write to logger
+                                    if backLogger == True:
+                                        logger.info("DEBUG_UTOUCH: Routing table IP address EXIST")
+                                    # Print statement
+                                    else:
+                                        print "DEBUG_UTOUCH: Routing table IP address EXIST"
+                                                                                                    
+                                checkProcCnt = 0   # Reset check process counter, start with ping process, on next process cycle
+
+                                # Write to logger
+                                if backLogger == True:
+                                    logger.info("DEBUG_UTOUCH: VPN tunnel OK")
+                                # Print statement
+                                else:
+                                    print "DEBUG_UTOUCH: VPN tunnel OK"
+
+                            # VPN tunnel not exist
+                            else:
+                                # Write to logger
+                                if backLogger == True:
+                                    logger.info("DEBUG_UTOUCH: VPN tunnel tun0 NOT exist!")
+                                # Print statement
+                                else:
+                                    print "DEBUG_UTOUCH: VPN tunnel tun0 NOT exist!"
+
+                                # Increment VPN tunnel check attempt counter
+                                vpnTunAtmptCnt += 1
+                                # 60 attempt still tun0 interface not exist, prepare to kill openvpn
+                                if vpnTunAtmptCnt == 60:
+                                    # STOP VPN tunnel
+                                    openVpnPID = []    # Current openvpn PID instances
+                                    openVpnPIDCnt = 0  # Current openvpn PID counter
+
+                                    # Get openvpn PID
+                                    openVpnPID, openVpnPIDCnt = terminateOpenVpn('ps aux | grep -v grep | grep openvpn')
+                                    # Openvpn instances exist
+                                    if openVpnPIDCnt > 0:
+                                        # Execute kill instance command
+                                        for a in range (openVpnPIDCnt):
+                                            tempArgs = 'kill -9 ' + openVpnPID[a]
+                                            
+                                            out = subprocess.Popen([tempArgs], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                            stdout,stderr = out.communicate()
+                                            
+                                            # NO error after command execution
+                                            if stderr == None:
+                                                # Write to logger
+                                                if backLogger == True:
+                                                    logger.info("DEBUG_UTOUCH: KILL OpenVPN instance [%s] SUCCESSFULL" % (openVpnPID[a]))
+                                                # Print statement
+                                                else:
+                                                    print "DEBUG_UTOUCH: KILL OpenVPN instance [%s] SUCCESSFULL" % (openVpnPID[a])
+
+                                    # There is NO openvpn instances
+                                    else:
+                                        # Write to logger
+                                        if backLogger == True:
+                                            logger.info("DEBUG_UTOUCH: NO OpenVPN instance EXIST!")
+                                        # Print statement
+                                        else:
+                                            print "DEBUG_UTOUCH: NO OpenVPN instance EXIST!"    
+
+                                    vpnTunAtmptCnt = 0
+                                    nc2VpnTunn = False   # Reset a flag to initiate back OpenVpn, checking network connectivity first 
+                                    checkProcCnt = 0     # Reset check process counter, start with ping process, on next process cycle
+                                    
+        # USB key detached
+        else:
+##            # First initialization of the pihole
+##            if initPihole == False:
+##                # First check wifi status
+##                out = subprocess.Popen(["nmcli radio wifi"], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+##                stdout,stderr = out.communicate()
+##                # NO error after command execution
+##                if stderr == None:
+##                    # Wifi still in enabled mode, shut it down
+##                    if 'enabled' in stdout:
+##                        DEFNULL = open(os.devnull, 'w')
+##                        retcode = subprocess.call(['/usr/local/bin/pihole', 'restartdns'], stdout=DEFNULL, stderr=subprocess.STDOUT)
+##
+##                        # Write to logger
+##                        if backLogger == True:
+##                            logger.info("DEBUG_UTOUCH: Initialize pihole DNS SUCCESSFULL")
+##                        # Print statement
+##                        else:
+##                            print "DEBUG_UTOUCH: Initialize pihole DNS SUCCESSFULL"
+##                                
+####                        # Restart pihole DNS server
+####                        out = subprocess.Popen(["/usr/local/bin/pihole restartdns"], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+####                        stdout,stderr = out.communicate()
+####
+####                        # NO error after command execution
+####                        if stderr == None:
+####                            # Write to logger
+####                            if backLogger == True:
+####                                logger.info("DEBUG_UTOUCH: Initialize pihole DNS SUCCESSFULL")
+####                            # Print statement
+####                            else:
+####                                print "DEBUG_UTOUCH: Initialize pihole DNS SUCCESSFULL"
+##
+##                        initPihole = True
+##            
+##            # Previously pihole already been initialized
+##            else:
+            # Shutdown WIFI if USB key NOT attached
+            if wifiShutDown == False:
+                checkProcCnt = 0
+                vpnTunAtmptCnt = 0
+                pingAtmptCnt = 0
+
+                initOthers = False
+                networkManFailed = False
+                nc2VpnTunn = False
+
+                # First check wifi status
+                out = subprocess.Popen(["nmcli radio wifi"], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                stdout,stderr = out.communicate()
+                # NO error after command execution
+                if stderr == None:
+                    # Wifi still in enabled mode, shut it down
+                    if 'enabled' in stdout: 
+                        # Wait before execute another command
+                        time.sleep(1)
+                                   
+                        # Disable WIFI radio hardware    
+                        out = subprocess.Popen(["nmcli radio wifi off"], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                        stdout,stderr = out.communicate()
+
+                        # NO error after command execution
+                        if stderr == None:
+                            # Write to logger
+                            if backLogger == True:
+                                logger.info("DEBUG_UTOUCH: Shutdown WIFI")
+                            # Print statement
+                            else:
+                                print "DEBUG_UTOUCH: Shutdown WIFI"
+
+                    # Wifi already been shutdown
+                    elif 'disabled' in stdout:
+                        # Write to logger
+                        if backLogger == True:
+                            logger.info("DEBUG_UTOUCH: Previously WIFI already been SHUTDOWN")
+                        # Print statement
+                        else:
+                            print "DEBUG_UTOUCH: Previously WIFI already been SHUTDOWN"
+
+                        wifiShutDown = True
+
+            # Previously WIFI already been shutdown
+            else:
+                # Write to logger
+                if backLogger == True:
+                    logger.info("DEBUG_UTOUCH: NC2VPN Secure GW OFFLINE")
+                # Print statement
+                else:
+                    print "DEBUG_UTOUCH: NC2VPN Secure GW OFFLINE"
+    
 # Connection and tunnel monitoring - network monitoring and validation
 def networkMon (threadname, delay):
     global dCryptProc
     global clientIPAddr
-    global pingValid
     global netMonChkCnt
     global tunnelValid
     global net4gValid
@@ -1060,8 +2080,6 @@ def networkMon (threadname, delay):
                 if stderr == None:
                     # Client computer already connected to wifi
                     if '1 received' in stdout:
-                        pingValid = True
-
                         # Write to logger
                         if backLogger == True:
                             logger.info("DEBUG_NETMON: PING client computer successful")
@@ -1505,7 +2523,6 @@ def lcdOperation (threadname, delay):
     global lcdBlTimeOut
     global scrollUP
     global scrollDWN
-    global pingValid
     global tunnelValid
     global net4gValid
     global radioMode
@@ -1987,7 +3004,8 @@ def checkUSBStatus (threadname, delay):
     global lcdDlyStatCnt
     global lcdBlTimeOut
     global netMonChkCnt
-    
+    global backLogger
+
     # Forever loop
     while True:
         # Loop every 0.5s
@@ -2398,63 +3416,129 @@ def main():
     global nc2VpnKeyTPath
     global raspiIO
     global radioMode
+    global ubuntuTouch
     
-    mylcd.lcd_clear()
+    # Using Raspberry PI computer
+    if ubuntuTouch == False:
+        mylcd.lcd_clear()
 
-    # Create thread to get battery status 
-    try:
-        thread.start_new_thread(checkBattStatus, ("[checkBattStatus]", 0.5 ))
-    except:
-        # Write to logger
-        if backLogger == True:
-            logger.info("THREAD_ERROR: Unable to start [checkBattStatus] thread")
-        # Print statement
-        else:
-            print "THREAD_ERROR: Unable to start [checkBattStatus] thread"
-
-    # Create thread for LCD operation                 
-    try:
-        thread.start_new_thread(lcdOperation, ("[lcdOperation]", 0.5 ))
-    except:
-        # Write to logger
-        if backLogger == True:
-            logger.info("THREAD_ERROR: Unable to start [lcdOperation] thread")
-        # Print statement
-        else:
-            print "THREAD_ERROR: Unable to start [lcdOperation] thread"
-
-    # Create thread for network monitoring and validation
-    try:
-        thread.start_new_thread(networkMon, ("[networkMon]", 1 ))
-    except:
-        # Write to logger
-        if backLogger == True:
-            logger.info("THREAD_ERROR: Unable to start [networkMon] thread")
-        # Print statement
-        else:
-            print "THREAD_ERROR: Unable to start [networkMon] thread"
-
-    if radioMode == False:
-        # Create thread for USB thumb drive removal
+        # Create thread to get battery status 
         try:
-            thread.start_new_thread(checkUSBStatus, ("[checkUSBStatus]", 0.5 ))
+            thread.start_new_thread(checkBattStatus, ("[checkBattStatus]", 0.5 ))
         except:
             # Write to logger
             if backLogger == True:
-                logger.info("THREAD_ERROR: Unable to start [checkUSBStatus] thread")
+                logger.info("THREAD_ERROR: Unable to start [checkBattStatus] thread")
             # Print statement
             else:
-                print "THREAD_ERROR: Unable to start [checkUSBStatus] thread"
-            
-    # Setup pyInotify
-    wm = pyinotify.WatchManager()  # Watch Manager
-    mask = pyinotify.IN_CREATE     # watched events
+                print "THREAD_ERROR: Unable to start [checkBattStatus] thread"
 
-    notifier = pyinotify.Notifier(wm, EventHandler(pubKeyPath, nc2VpnKeyPath, nc2VpnKeyTPath))
+        # Create thread for LCD operation                 
+        try:
+            thread.start_new_thread(lcdOperation, ("[lcdOperation]", 0.5 ))
+        except:
+            # Write to logger
+            if backLogger == True:
+                logger.info("THREAD_ERROR: Unable to start [lcdOperation] thread")
+            # Print statement
+            else:
+                print "THREAD_ERROR: Unable to start [lcdOperation] thread"
 
-    wdd = wm.add_watch(usbMountPath, mask)
+        # Create thread for network monitoring and validation
+        try:
+            thread.start_new_thread(networkMon, ("[networkMon]", 1 ))
+        except:
+            # Write to logger
+            if backLogger == True:
+                logger.info("THREAD_ERROR: Unable to start [networkMon] thread")
+            # Print statement
+            else:
+                print "THREAD_ERROR: Unable to start [networkMon] thread"
 
-    notifier.loop()  # Blocking loop
+        # Secure gateway feature
+        if radioMode == False:
+            # Create thread for USB thumb drive removal
+            try:
+                thread.start_new_thread(checkUSBStatus, ("[checkUSBStatus]", 0.5 ))
+            except:
+                # Write to logger
+                if backLogger == True:
+                    logger.info("THREAD_ERROR: Unable to start [checkUSBStatus] thread")
+                # Print statement
+                else:
+                    print "THREAD_ERROR: Unable to start [checkUSBStatus] thread"
+
+            # Setup pyInotify
+            wm = pyinotify.WatchManager()  # Watch Manager
+            mask = pyinotify.IN_CREATE     # watched events
+
+            notifier = pyinotify.Notifier(wm, EventHandler(pubKeyPath, nc2VpnKeyPath, nc2VpnKeyTPath))
+
+            wdd = wm.add_watch(usbMountPath, mask)
+
+            notifier.loop()  # Blocking loop
+
+        # Radio monitoring mode 
+        else:
+            # Forever loop - Just to ensure the script are running
+            while True:
+                # Loop every 1s
+                time.sleep(1)
+
+    # Using Ubuntu Touch smartphone 
+    else:
+        # Create thread for network monitoring and validation
+        try:
+            thread.start_new_thread(uTouchCommProc, ("[uTouchCommProc]", 1 ))
+        except:
+            # Write to logger
+            if backLogger == True:
+                logger.info("THREAD_ERROR: Unable to start [uTouchCommProc] thread")
+            # Print statement
+            else:
+                print "THREAD_ERROR: Unable to start [uTouchCommProc] thread"
+
+        # Check directory existence
+        directExists = False
+        while directExists == False:
+            # Check for folder availability
+            directExists = path.exists('/media/phablet')
+            # Start create the directory
+            if directExists == False:
+                out = subprocess.Popen(['cd /media;mkdir phablet'], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                stdout,stderr = out.communicate()
+                
+                # NO error after command execution
+                if stderr == None:
+                    # Write to logger
+                    if backLogger == True:
+                        logger.info("MAIN: Create /media/phablet directory SUCCESSFULL")
+                    # Print statement
+                    else:
+                        print "MAIN: Create /media/phablet directory SUCCESSFULL"
+
+                    directExists = True               
+        
+        # Create thread for checking current USB thumb drive status
+        try:
+            thread.start_new_thread(checkUSBUtouchStatus, ("[checkUSBUtouchStatus]", 0.5 ))
+        except:
+            # Write to logger
+            if backLogger == True:
+                logger.info("THREAD_ERROR: Unable to start [checkUSBUtouchStatus] thread")
+            # Print statement
+            else:
+                print "THREAD_ERROR: Unable to start [checkUSBUtouchStatus] thread"
+
+        # Setup pyInotify
+        wm = pyinotify.WatchManager()  # Watch Manager
+        mask = pyinotify.IN_CREATE     # watched events
+
+        notifier = pyinotify.Notifier(wm, EventHandler(pubKeyPath, nc2VpnKeyPath, nc2VpnKeyTPath))
+
+        wdd = wm.add_watch(usbMountPath, mask)
+
+        notifier.loop()  # Blocking loop
     
 if __name__ == "__main__":
     main()
